@@ -39,7 +39,9 @@ class _LoginScreenState extends State<LoginScreen> {
               children: [
                 const Icon(Icons.error_outline, color: Colors.white),
                 const SizedBox(width: 8),
-                Expanded(child: Text(e.toString().replaceAll('Exception: ', ''))),
+                Expanded(
+                  child: Text(e.toString().replaceAll('Exception: ', '')),
+                ),
               ],
             ),
             backgroundColor: AppColors.destructive,
@@ -74,7 +76,7 @@ class _LoginScreenState extends State<LoginScreen> {
             controller: urlController,
             decoration: const InputDecoration(
               labelText: 'Server Base URL',
-              hintText: 'http://192.168.1.5:3000/api',
+              hintText: 'http://192.168.31.55:3000/api',
               prefixIcon: Icon(Icons.link),
             ),
           ),
@@ -91,7 +93,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   if (context.mounted) {
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Server URL saved successfully')),
+                      const SnackBar(
+                        content: Text('Server URL saved successfully'),
+                      ),
                     );
                   }
                 }
@@ -175,7 +179,8 @@ class _LoginScreenState extends State<LoginScreen> {
                           labelText: 'Username',
                           prefixIcon: Icon(Icons.person_outline),
                         ),
-                        validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+                        validator: (v) =>
+                            v == null || v.isEmpty ? 'Required' : null,
                       ),
                       const SizedBox(height: 16),
                       TextFormField(
@@ -187,11 +192,18 @@ class _LoginScreenState extends State<LoginScreen> {
                           labelText: 'Password',
                           prefixIcon: const Icon(Icons.lock_outline),
                           suffixIcon: IconButton(
-                            icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
-                            onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                            icon: Icon(
+                              _obscurePassword
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
+                            ),
+                            onPressed: () => setState(
+                              () => _obscurePassword = !_obscurePassword,
+                            ),
                           ),
                         ),
-                        validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+                        validator: (v) =>
+                            v == null || v.isEmpty ? 'Required' : null,
                       ),
                       const SizedBox(height: 32),
                       SizedBox(
@@ -208,9 +220,18 @@ class _LoginScreenState extends State<LoginScreen> {
                               ? const SizedBox(
                                   width: 24,
                                   height: 24,
-                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
                                 )
-                              : const Text('Login', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                              : const Text(
+                                  'Login',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                         ),
                       ),
                     ],

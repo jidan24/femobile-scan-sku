@@ -11,53 +11,91 @@ class DataSkuTab extends StatefulWidget {
   State<DataSkuTab> createState() => _DataSkuTabState();
 }
 
-class _DataSkuTabState extends State<DataSkuTab> with AutomaticKeepAliveClientMixin {
+class _DataSkuTabState extends State<DataSkuTab>
+    with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
 
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
   Timer? _debounce;
-  
+
   List<dynamic> _data = [];
   bool _isLoading = false;
-  
-  int _limit = 10;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+
+  static const int _limit = 10;
   int _currentPage = 1;
-  int _totalPages = 1;
   int _totalData = 0;
 
-  final ScrollController _horizontalScrollController = ScrollController();
   @override
   void initState() {
     super.initState();
-    _fetchData();
+    _fetchData(refresh: true);
+    _scrollController.addListener(_onScroll);
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
     _searchController.dispose();
-    _horizontalScrollController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _fetchData({bool showLoading = true}) async {
-    if (showLoading) setState(() => _isLoading = true);
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 100) {
+      if (!_isLoadingMore && _hasMore) {
+        _loadMore();
+      }
+    }
+  }
+
+  // Jika konten tidak memenuhi layar setelah load, langsung muat lebih
+  void _checkIfNeedLoadMore() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_scrollController.hasClients &&
+          _scrollController.position.maxScrollExtent == 0 &&
+          _hasMore &&
+          !_isLoadingMore) {
+        _loadMore();
+      }
+    });
+  }
+
+  Future<void> _fetchData({bool refresh = false}) async {
+    if (_isLoading) return;
+    setState(() {
+      _isLoading = true;
+      if (refresh) {
+        _data = [];
+        _currentPage = 1;
+        _hasMore = true;
+      }
+    });
+
     try {
       final response = await ApiService.fetchSkus(
         search: _searchController.text,
         limit: _limit,
-        page: _currentPage,
+        page: 1,
       );
-      
-      if (response['success']) {
+
+      if (mounted && response['success'] == true) {
+        final newData = response['data'] as List<dynamic>;
+        final totalPages = (response['pagination']['totalPages'] as num).toInt();
         setState(() {
-          _data = response['data'];
-          _totalPages = response['pagination']['totalPages'];
-          _totalData = response['totalData'] ?? response['pagination']['total'] ?? 0;
-          // Ensure total pages is at least 1 to avoid pagination issues
-          if (_totalPages < 1) _totalPages = 1;
+          _data = newData;
+          _currentPage = 1;
+          _totalData = (response['totalData'] ?? response['pagination']['total'] ?? 0) is num
+              ? (response['totalData'] ?? response['pagination']['total'] ?? 0)
+              : 0;
+          _hasMore = _currentPage < totalPages;
         });
+        _checkIfNeedLoadMore();
       }
     } catch (e) {
       if (mounted) {
@@ -66,291 +104,381 @@ class _DataSkuTabState extends State<DataSkuTab> with AutomaticKeepAliveClientMi
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  void _onSearch() {
-    setState(() {
-      _currentPage = 1;
-    });
-    _fetchData();
+  Future<void> _loadMore() async {
+    if (_isLoadingMore || !_hasMore) return;
+    setState(() => _isLoadingMore = true);
+
+    try {
+      final nextPage = _currentPage + 1;
+      final response = await ApiService.fetchSkus(
+        search: _searchController.text,
+        limit: _limit,
+        page: nextPage,
+      );
+
+      if (mounted && response['success'] == true) {
+        final newData = response['data'] as List<dynamic>;
+        final totalPages = (response['pagination']['totalPages'] as num).toInt();
+        setState(() {
+          _data.addAll(newData);
+          _currentPage = nextPage;
+          _hasMore = _currentPage < totalPages;
+        });
+        _checkIfNeedLoadMore();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load more: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingMore = false);
+    }
   }
 
   void _onSearchChanged(String query) {
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), () {
-      _onSearch();
+      _fetchData(refresh: true);
     });
   }
 
   String _formatDate(String isoString) {
     try {
       final date = DateTime.parse(isoString).toLocal();
-      return DateFormat('yyyy-MM-dd HH:mm').format(date);
+      return DateFormat('dd MMM yyyy, HH:mm').format(date);
     } catch (e) {
       return isoString;
     }
   }
 
-  List<Widget> _buildPaginationControls() {
-    List<Widget> controls = [];
-    
-    // Previous Button
-    controls.add(
-      IconButton(
-        icon: const Icon(Icons.chevron_left),
-        onPressed: _currentPage > 1 ? () {
-          setState(() => _currentPage--);
-          _fetchData();
-        } : null,
-      )
-    );
-
-    // Build page numbers 1 2 3 ... 11 logic
-    Set<int> pageNumbers = {};
-    pageNumbers.add(1);
-    pageNumbers.add(_totalPages);
-    
-    for (int i = _currentPage - 2; i <= _currentPage + 2; i++) {
-      if (i > 1 && i < _totalPages) {
-        pageNumbers.add(i);
-      }
-    }
-
-    List<int> sortedPages = pageNumbers.toList()..sort();
-    
-    int? prevPage;
-    for (int page in sortedPages) {
-      if (prevPage != null && page - prevPage > 1) {
-        controls.add(const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 8.0),
-          child: Text('...'),
-        ));
-      }
-      
-      controls.add(
-        InkWell(
-          onTap: () {
-            if (_currentPage != page) {
-              setState(() => _currentPage = page);
-              _fetchData();
-            }
-          },
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 4),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: _currentPage == page ? AppColors.primary : Colors.transparent,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: _currentPage == page ? AppColors.primary : AppColors.border,
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return Column(
+      children: [
+        // Search Bar
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: TextField(
+            controller: _searchController,
+            onChanged: _onSearchChanged,
+            onSubmitted: (_) => _fetchData(refresh: true),
+            decoration: InputDecoration(
+              hintText: 'Search SKU, color, or operator...',
+              prefixIcon: const Icon(
+                Icons.search,
+                color: AppColors.mutedForeground,
               ),
-            ),
-            child: Text(
-              '$page',
-              style: TextStyle(
-                color: _currentPage == page ? AppColors.primaryForeground : AppColors.foreground,
-                fontWeight: _currentPage == page ? FontWeight.bold : FontWeight.normal,
+              suffixIcon: _searchController.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(
+                        Icons.clear,
+                        size: 18,
+                        color: AppColors.mutedForeground,
+                      ),
+                      onPressed: () {
+                        _searchController.clear();
+                        _fetchData(refresh: true);
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: AppColors.card,
+              contentPadding:
+                  const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(24),
+                borderSide: const BorderSide(color: AppColors.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(24),
+                borderSide: const BorderSide(color: AppColors.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(24),
+                borderSide:
+                    const BorderSide(color: AppColors.primary, width: 2),
               ),
             ),
           ),
         ),
-      );
-      prevPage = page;
-    }
 
-    // Next Button
-    controls.add(
-      IconButton(
-        icon: const Icon(Icons.chevron_right),
-        onPressed: _currentPage < _totalPages ? () {
-          setState(() => _currentPage++);
-          _fetchData();
-        } : null,
-      )
-    );
+        // Total count badge
+        if (!_isLoading)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withAlpha((255 * 0.1).toInt()),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  '${_data.length} dari $_totalData item',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ),
+            ),
+          ),
 
-    return controls;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        children: [
-          // Toolbar
-          Row(
-            children: [
-              Expanded(
-                child: SizedBox(
-                  height: 40,
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
-                      hintText: 'Search SKU...',
-                      prefixIcon: const Icon(Icons.search, size: 20, color: AppColors.mutedForeground),
-                      filled: true,
-                      fillColor: AppColors.card,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        borderSide: const BorderSide(color: AppColors.border),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        borderSide: const BorderSide(color: AppColors.border),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        borderSide: const BorderSide(color: AppColors.primary, width: 2),
-                      ),
-                      isDense: true,
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.clear, size: 18, color: AppColors.mutedForeground),
-                        onPressed: () {
-                          _searchController.clear();
-                          _onSearch();
+        // List
+        Expanded(
+          child: _isLoading
+              ? const Center(
+                  child: CircularProgressIndicator(color: AppColors.primary),
+                )
+              : _data.isEmpty
+                  ? _buildEmptyState()
+                  : RefreshIndicator(
+                      color: AppColors.primary,
+                      onRefresh: () => _fetchData(refresh: true),
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                        itemCount: _data.length + (_isLoadingMore ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          if (index == _data.length) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  color: AppColors.primary,
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            );
+                          }
+                          return _buildSkuCard(_data[index], index);
                         },
                       ),
                     ),
-                    onChanged: _onSearchChanged,
-                    onSubmitted: (_) => _onSearch(),
+        ),
+
+        // No more data indicator
+        if (!_isLoading && !_hasMore && _data.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12, top: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  height: 1,
+                  width: 40,
+                  color: AppColors.border,
+                ),
+                const SizedBox(width: 12),
+                const Text(
+                  'Semua data sudah dimuat',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.mutedForeground,
                   ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Container(
-                height: 40,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: AppColors.card,
-                  border: Border.all(color: AppColors.border),
-                  borderRadius: BorderRadius.circular(20),
+                const SizedBox(width: 12),
+                Container(
+                  height: 1,
+                  width: 40,
+                  color: AppColors.border,
                 ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<int>(
-                    isDense: true,
-                    value: _limit,
-                    items: [10, 20, 50, 100].map((int value) {
-                      return DropdownMenuItem<int>(
-                        value: value,
-                        child: Text('$value / page'),
-                      );
-                    }).toList(),
-                    onChanged: (int? newValue) {
-                      if (newValue != null && newValue != _limit) {
-                        setState(() {
-                          _limit = newValue;
-                          _currentPage = 1;
-                        });
-                        _fetchData();
-                      }
-                    },
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                height: 40,
-                width: 40,
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: IconButton(
-                  icon: const Icon(Icons.refresh, color: AppColors.primaryForeground, size: 20),
-                  onPressed: () => _fetchData(showLoading: true),
-                  tooltip: 'Refresh Data',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withAlpha((255 * 0.1).toInt()),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Text(
-                'Showing ${_data.length} of $_totalData items',
-                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: AppColors.primary),
-              ),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
-          
-          // Table
-          Expanded(
-            child: _isLoading 
-                ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
-                : Card(
-                    margin: EdgeInsets.zero,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.vertical,
-                        child: Scrollbar(
-                          controller: _horizontalScrollController,
-                          thumbVisibility: true,
-                          child: SingleChildScrollView(
-                            controller: _horizontalScrollController,
-                            scrollDirection: Axis.horizontal,
-                            child: Padding(
-                              padding: const EdgeInsets.only(bottom: 16.0),
-                              child: Theme(
-                                data: Theme.of(context).copyWith(dividerColor: AppColors.border),
-                                child: DataTable(
-                                columnSpacing: 32,
-                                horizontalMargin: 24,
-                                headingTextStyle: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.mutedForeground, fontSize: 12, letterSpacing: 0.5),
-                                dataTextStyle: const TextStyle(fontSize: 14, color: AppColors.foreground),
-                                headingRowColor: WidgetStateProperty.resolveWith(
-                                  (states) => AppColors.muted,
-                                ),
-                                columns: const [
-                          DataColumn(label: Expanded(child: Text('SKU Code', textAlign: TextAlign.center))),
-                          DataColumn(label: Expanded(child: Text('Color', textAlign: TextAlign.center))),
-                          DataColumn(label: Expanded(child: Text('Operator Name', textAlign: TextAlign.center))),
-                          DataColumn(label: Expanded(child: Text('Created At', textAlign: TextAlign.center))),
-                          DataColumn(label: Expanded(child: Text('Updated At', textAlign: TextAlign.center))),
-                        ],
-                        rows: _data.map((item) {
-                          return DataRow(
-                            cells: [
-                              DataCell(Align(alignment: Alignment.center, child: Text(item['skuCode'] ?? '-'))),
-                              DataCell(Align(alignment: Alignment.center, child: Text(item['color'] ?? '-'))),
-                              DataCell(Align(alignment: Alignment.center, child: Text(item['operatorName'] ?? '-'))),
-                              DataCell(Align(alignment: Alignment.center, child: Text(_formatDate(item['createdAt'] ?? '')))),
-                              DataCell(Align(alignment: Alignment.center, child: Text(_formatDate(item['updatedAt'] ?? '')))),
-                            ],
-                          );
-                        }).toList(),
-                      ),
+      ],
+    );
+  }
+
+  Widget _buildSkuCard(Map<String, dynamic> item, int index) {
+    final skuCode = item['skuCode'] ?? '-';
+    final color = item['color'] ?? '-';
+    final operatorName = item['operatorName'] ?? '-';
+    final quantity = item['quantity'];
+    final createdAt = item['createdAt'] != null
+        ? _formatDate(item['createdAt'])
+        : '-';
+    final updatedAt = item['updatedAt'] != null
+        ? _formatDate(item['updatedAt'])
+        : '-';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header row: SKU Code + index badge
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withAlpha((255 * 0.1).toInt()),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '#${index + 1}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primary,
                     ),
                   ),
                 ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    skuCode,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.foreground,
+                      letterSpacing: 0.5,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
+                if (quantity != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.secondary.withAlpha((255 * 0.12).toInt()),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'Qty: $quantity',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.secondary,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1, color: AppColors.border),
+            const SizedBox(height: 12),
+
+            // Info rows
+            _buildInfoRow(Icons.color_lens_outlined, 'Color', color),
+            const SizedBox(height: 8),
+            _buildInfoRow(Icons.person_outline, 'Operator', operatorName),
+            const SizedBox(height: 8),
+            _buildInfoRow(
+              Icons.calendar_today_outlined,
+              'Created',
+              createdAt,
+            ),
+            if (updatedAt != createdAt) ...[
+              const SizedBox(height: 8),
+              _buildInfoRow(
+                Icons.update_outlined,
+                'Updated',
+                updatedAt,
               ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(IconData icon, String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: AppColors.mutedForeground),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 68,
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 13,
+              color: AppColors.mutedForeground,
             ),
           ),
+        ),
+        const Text(
+          ':  ',
+          style: TextStyle(color: AppColors.mutedForeground, fontSize: 13),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: AppColors.foreground,
+            ),
           ),
-          
-          const SizedBox(height: 16),
-          
-          // Pagination
-          if (!_isLoading && _totalPages > 0)
-            Row(
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return RefreshIndicator(
+      color: AppColors.primary,
+      onRefresh: () => _fetchData(refresh: true),
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          SizedBox(
+            height: MediaQuery.of(context).size.height * 0.4,
+            child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
-              children: _buildPaginationControls(),
+              children: [
+                Icon(
+                  Icons.inventory_2_outlined,
+                  size: 64,
+                  color: AppColors.mutedForeground.withAlpha(128),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Tidak ada data',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.mutedForeground,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Tarik ke bawah untuk refresh',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppColors.mutedForeground,
+                  ),
+                ),
+              ],
             ),
+          ),
         ],
       ),
     );

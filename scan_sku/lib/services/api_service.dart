@@ -8,7 +8,7 @@ class ApiService {
   static const String _tokenKey = 'jwt_token';
   static const String _urlKey = 'server_url';
   static String get _defaultUrl =>
-      dotenv.env['API_BASE_URL'] ?? 'http://192.168.31.183:3000/api';
+      dotenv.env['API_BASE_URL'] ?? 'http://192.168.31.55:3000/api';
 
   // Base URL Methods
   static Future<void> saveBaseUrl(String url) async {
